@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sonic Canvas — Fluid</title>
+<style>
+  :root{
+    --page-bg: #ECE1D2; --ink: #8a7d6c; --ink-soft: #b3a794;
+    --panel-bg: rgba(255,252,246,0.72); --radius: 18px;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; margin:0; background:var(--page-bg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    color:var(--ink); overflow:hidden; }
+  body{ display:flex; align-items:center; justify-content:center; }
+  #stage{ position:relative; }
+  #canvasWrap{ position:relative; border-radius:var(--radius); overflow:hidden;
+    box-shadow:0 30px 60px -25px rgba(60,45,25,0.28), 0 2px 8px rgba(60,45,25,0.06); }
+  canvas#glcanvas{ display:block; }
+  #grain{ position:absolute; inset:0; pointer-events:none; mix-blend-mode:multiply; opacity:0.06; }
+  #startOverlay{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    background:rgba(245,239,230,0.55); backdrop-filter:blur(2px); border-radius:var(--radius);
+    transition:opacity 0.5s ease; }
+  #startOverlay.hidden{ opacity:0; pointer-events:none; }
+  #startBtn{ font-size:14px; letter-spacing:0.03em; padding:12px 22px; border-radius:999px;
+    border:1px solid var(--ink-soft); background:rgba(255,255,255,0.5); color:var(--ink); cursor:pointer; }
+  #startBtn:hover{ background:rgba(255,255,255,0.85); }
+  #gearBtn{ position:absolute; bottom:16px; right:16px; width:34px; height:34px; border-radius:50%;
+    border:none; background:rgba(255,255,255,0.35); color:var(--ink); font-size:16px; cursor:pointer;
+    opacity:0.45; transition:all 0.2s ease; display:flex; align-items:center; justify-content:center; }
+  #gearBtn:hover{ opacity:0.95; transform:rotate(25deg); }
+  #panel{ position:absolute; bottom:58px; right:16px; width:240px; background:var(--panel-bg);
+    backdrop-filter:blur(10px); border-radius:14px; padding:16px; font-size:12.5px;
+    box-shadow:0 12px 30px -10px rgba(60,45,25,0.25); transform-origin:bottom right; transform:scale(0.9);
+    opacity:0; pointer-events:none; transition:all 0.18s ease; }
+  #panel.open{ opacity:1; transform:scale(1); pointer-events:auto; }
+  #panel h4{ margin:0 0 6px 0; font-size:11px; text-transform:uppercase; letter-spacing:0.08em;
+    color:var(--ink-soft); font-weight:600; }
+  .field{ margin-bottom:14px; }
+  .row{ display:flex; gap:6px; }
+  .opt{ flex:1; text-align:center; padding:6px 4px; border-radius:8px; border:1px solid rgba(138,125,108,0.25);
+    cursor:pointer; background:rgba(255,255,255,0.3); font-size:11px; }
+  .opt.active{ background:rgba(138,125,108,0.18); border-color:rgba(138,125,108,0.5); }
+  input[type="range"]{ width:100%; }
+  input[type="color"]{ width:100%; height:26px; border:none; border-radius:6px; background:none; cursor:pointer; }
+  #eraseBtn{ width:100%; padding:8px; border-radius:8px; border:1px solid rgba(138,125,108,0.3);
+    background:rgba(255,255,255,0.4); color:var(--ink); cursor:pointer; font-size:12px; }
+  #eraseBtn:hover{ background:rgba(255,255,255,0.8); }
+  #listeningDot{ position:absolute; top:14px; left:16px; width:7px; height:7px; border-radius:50%;
+    background:#c98a52; opacity:0.55; animation:pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse{ 0%,100%{opacity:0.25;} 50%{opacity:0.7;} }
+  #levelMeterWrap{ position:absolute; top:14px; left:30px; width:90px; height:6px;
+    background:rgba(138,125,108,0.15); border-radius:4px; overflow:hidden; display:none; }
+  #levelMeterBar{ height:100%; width:0%; background:#c98a52; transition:width 0.05s linear; }
+  #warn{ position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+    padding:30px; text-align:center; font-size:13px; color:var(--ink); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="canvasWrap">
+    <canvas id="glcanvas" width="900" height="600"></canvas>
+    <div id="grain"></div>
+    <div id="listeningDot" style="display:none;"></div>
+    <div id="levelMeterWrap"><div id="levelMeterBar"></div></div>
+    <div id="startOverlay"><button id="startBtn">tap to begin listening</button></div>
+    <div id="warn">Your browser doesn't support WebGL2. Try a recent Chrome, Edge, or Firefox.</div>
+  </div>
+  <button id="gearBtn" aria-label="Settings">⚙</button>
+  <div id="panel">
+    <div class="field"><h4>Color mode</h4>
+      <div class="row" id="colorModeRow">
+        <div class="opt" data-val="mathematical">Math</div>
+        <div class="opt" data-val="organic">Organic</div>
+        <div class="opt" data-val="hybrid">Hybrid</div>
+      </div>
+    </div>
+    <div class="field"><h4>Flow style</h4>
+      <div class="row" id="flowStyleRow">
+        <div class="opt" data-val="watercolor">Water</div>
+        <div class="opt" data-val="ink">Ink</div>
+        <div class="opt" data-val="mixed">Mixed</div>
+      </div>
+    </div>
+    <div class="field"><h4>Quality</h4>
+      <div class="row" id="qualityRow">
+        <div class="opt" data-val="low">Low</div>
+        <div class="opt" data-val="medium">Med</div>
+        <div class="opt" data-val="high">High</div>
+        <div class="opt" data-val="ultra">Ultra</div>
+      </div>
+    </div>
+    <div class="field"><h4>Flow intensity</h4>
+      <input type="range" id="intensitySlider" min="0.5" max="2" step="0.1" value="1">
+    </div>
+    <div class="field"><h4>Simulation speed</h4>
+      <input type="range" id="speedSlider" min="0.3" max="2.5" step="0.1" value="1">
+    </div>
+    <div class="field"><h4>Background</h4>
+      <input type="color" id="bgColorPicker" value="#F5EFE6">
+    </div>
+    <button id="eraseBtn">Clear canvas</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('glcanvas');
+  const gl = canvas.getContext('webgl2', { alpha:false, antialias:false });
+  if (!gl){ document.getElementById('warn').style.display='flex'; return; }
+  gl.getExtension('EXT_color_buffer_float');
+
+  const CSS_W = 900, CSS_H = 600;
+  document.getElementById('canvasWrap').style.width = CSS_W+'px';
+  document.getElementById('canvasWrap').style.height = CSS_H+'px';
+  const dpr = Math.min(window.devicePixelRatio||1, 2);
+  canvas.width = CSS_W*dpr; canvas.height = CSS_H*dpr;
+  canvas.style.width = CSS_W+'px'; canvas.style.height = CSS_H+'px';
+
+  // Physics (velocity/pressure) runs at low res — cheap. Dye (what you see)
+  // renders at much higher res — sharp. Decoupling these is the single
+  // biggest lever for visible detail without a heavier GPU cost overall.
+  const ASPECT = CSS_W / CSS_H;
+  const QUALITY_PRESETS = {
+    low:    { sim: 128, dye: 512 },
+    medium: { sim: 192, dye: 768 },
+    high:   { sim: 256, dye: 1024 },  // matches Pavel's reference exactly
+    ultra:  { sim: 320, dye: 1280 }
+  };
+  let simW, simH, dyeW, dyeH;
+
+  // ---------- settings ----------
+  const defaults = { colorMode:'hybrid', flowStyle:'mixed', intensity:1, bgColor:'#F5EFE6', quality:'high', speed:1 };
+  let settings = Object.assign({}, defaults);
+  try{ settings = Object.assign({}, defaults, JSON.parse(localStorage.getItem('sonicFluidSettings')||'{}')); }catch(e){}
+  function saveSettings(){ localStorage.setItem('sonicFluidSettings', JSON.stringify(settings)); }
+
+  const panel = document.getElementById('panel');
+  const gearBtn = document.getElementById('gearBtn');
+  gearBtn.addEventListener('click', ()=>panel.classList.toggle('open'));
+  document.addEventListener('click', (e)=>{
+    if (!panel.contains(e.target) && e.target!==gearBtn && panel.classList.contains('open')) panel.classList.remove('open');
+  });
+  function refreshPanel(){
+    document.querySelectorAll('#colorModeRow .opt').forEach(el=>el.classList.toggle('active', el.dataset.val===settings.colorMode));
+    document.querySelectorAll('#flowStyleRow .opt').forEach(el=>el.classList.toggle('active', el.dataset.val===settings.flowStyle));
+    document.querySelectorAll('#qualityRow .opt').forEach(el=>el.classList.toggle('active', el.dataset.val===settings.quality));
+    document.getElementById('intensitySlider').value = settings.intensity;
+    document.getElementById('speedSlider').value = settings.speed;
+    document.getElementById('bgColorPicker').value = settings.bgColor;
+  }
+  refreshPanel();
+  document.getElementById('colorModeRow').addEventListener('click', e=>{
+    if (!e.target.dataset.val) return;
+    settings.colorMode = e.target.dataset.val; saveSettings(); refreshPanel();
+  });
+  document.getElementById('flowStyleRow').addEventListener('click', e=>{
+    if (!e.target.dataset.val) return;
+    settings.flowStyle = e.target.dataset.val; saveSettings(); refreshPanel();
+  });
+  document.getElementById('qualityRow').addEventListener('click', e=>{
+    if (!e.target.dataset.val) return;
+    settings.quality = e.target.dataset.val; saveSettings(); refreshPanel();
+    applyQuality(settings.quality);
+  });
+  document.getElementById('intensitySlider').addEventListener('input', e=>{
+    settings.intensity = parseFloat(e.target.value); saveSettings();
+  });
+  document.getElementById('speedSlider').addEventListener('input', e=>{
+    settings.speed = parseFloat(e.target.value); saveSettings();
+  });
+  document.getElementById('bgColorPicker').addEventListener('input', e=>{
+    settings.bgColor = e.target.value; saveSettings();
+  });
+
+  function hexToRgb01(hex){
+    const v = parseInt(hex.slice(1),16);
+    return [((v>>16)&255)/255, ((v>>8)&255)/255, (v&255)/255];
+  }
+
+  const grainSvg = "<svg xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>";
+  document.getElementById('grain').style.backgroundImage = "url(\"data:image/svg+xml;utf8," + encodeURIComponent(grainSvg) + "\")";
+
+  // ---------- GL helpers ----------
+  function compile(type, src){
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  function program(vsSrc, fsSrc){
+    const p = gl.createProgram();
+    gl.attachShader(p, compile(gl.VERTEX_SHADER, vsSrc));
+    gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fsSrc));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(p));
+    const uniforms = {};
+    const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+    for (let i=0;i<n;i++){
+      const info = gl.getActiveUniform(p,i);
+      uniforms[info.name] = gl.getUniformLocation(p, info.name);
+    }
+    return { program:p, uniforms };
+  }
+
+  const quadVerts = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
+  const quadBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, quadVerts, gl.STATIC_DRAW);
+  function bindQuad(prog){
+    const loc = gl.getAttribLocation(prog, 'aPosition');
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  }
+  function drawQuad(){ gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); }
+
+  function createFBO(w,h){
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+    const fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    gl.viewport(0,0,w,h);
+    gl.clearColor(0,0,0,1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    return { fbo, tex, w, h };
+  }
+  function createDoubleFBO(w,h){
+    let a = createFBO(w,h), b = createFBO(w,h);
+    return {
+      get read(){ return a; }, get write(){ return b; },
+      swap(){ const t=a; a=b; b=t; }
+    };
+  }
+
+  let velocity, dye, divergenceFBO, curlFBO, pressure;
+  function initFramebuffers(){
+    velocity = createDoubleFBO(simW, simH);
+    dye = createDoubleFBO(dyeW, dyeH);
+    divergenceFBO = createFBO(simW, simH);
+    curlFBO = createFBO(simW, simH);
+    pressure = createDoubleFBO(simW, simH);
+  }
+  function applyQuality(level){
+    const preset = QUALITY_PRESETS[level] || QUALITY_PRESETS.high;
+    simW = preset.sim; simH = Math.round(preset.sim / ASPECT);
+    dyeW = preset.dye; dyeH = Math.round(preset.dye / ASPECT);
+    initFramebuffers();
+  }
+  applyQuality(settings.quality);
+
+  // ---------- shaders ----------
+  const baseVS = `#version 300 es
+    precision highp float;
+    in vec2 aPosition;
+    out vec2 vUv, vL, vR, vT, vB;
+    uniform vec2 texelSize;
+    void main(){
+      vUv = aPosition*0.5+0.5;
+      vL = vUv - vec2(texelSize.x, 0.0);
+      vR = vUv + vec2(texelSize.x, 0.0);
+      vT = vUv + vec2(0.0, texelSize.y);
+      vB = vUv - vec2(0.0, texelSize.y);
+      gl_Position = vec4(aPosition, 0.0, 1.0);
+    }`;
+
+  const splatFS = `#version 300 es
+    precision highp float;
+    in vec2 vUv;
+    uniform sampler2D uTarget;
+    uniform float aspectRatio;
+    uniform vec3 splatColor;
+    uniform vec2 point;
+    uniform float radius;
+    out vec4 fragColor;
+    void main(){
+      vec2 p = vUv - point;
+      p.x *= aspectRatio;
+      float d = exp(-dot(p,p)/radius);
+      vec3 base = texture(uTarget, vUv).xyz;
+      fragColor = vec4(base + d*splatColor, 1.0);
+    }`;
+
+  // Dye uses a bounded blend, not additive — new paint mixes into old paint
+  // instead of stacking brightness on top of it. Additive light-mixing is what
+  // was blowing every heavily-painted area out to solid white; paint doesn't
+  // work that way, so this is the correct model, not just a patch.
+  const dyeSplatFS = `#version 300 es
+    precision highp float;
+    in vec2 vUv;
+    uniform sampler2D uTarget;
+    uniform float aspectRatio;
+    uniform vec3 splatColor;
+    uniform vec2 point;
+    uniform float radius;
+    uniform float strength;
+    out vec4 fragColor;
+    // smooth, low-frequency wobble baked in once at deposit time — an organic
+    // blob shape from the first frame, not a perfect circle waiting for the
+    // fluid to fold it into something interesting several seconds later
+    float organicWobble(vec2 p, float freq){
+      return sin(p.x*freq+1.3)*sin(p.y*freq*1.7+0.7)
+           + 0.5*sin(p.x*freq*2.3-0.4)*sin(p.y*freq*1.1+2.1);
+    }
+    void main(){
+      vec2 p = vUv - point;
+      p.x *= aspectRatio;
+      float freq = 5.0/sqrt(max(radius,1e-5));
+      float edgeShape = 1.0 + 0.22*organicWobble(p, freq);
+      float d = exp(-dot(p,p)*edgeShape/radius);
+      d = clamp(d*strength, 0.0, 1.0);
+      vec3 base = texture(uTarget, vUv).xyz;
+      fragColor = vec4(mix(base, splatColor, d), 1.0);
+    }`;
+
+  const advectionFS = `#version 300 es
+    precision highp float;
+    in vec2 vUv;
+    uniform sampler2D uVelocity;
+    uniform sampler2D uSource;
+    uniform float dt;
+    uniform float dissipation;
+    out vec4 fragColor;
+    void main(){
+      vec2 vel = texture(uVelocity, vUv).xy;
+      vec2 coord = vUv - dt*vel;
+      vec4 result = texture(uSource, coord);
+      float decay = 1.0 + dissipation*dt;
+      fragColor = result / decay;
+    }`;
+
+  const divergenceFS = `#version 300 es
+    precision highp float;
+    in vec2 vUv, vL, vR, vT, vB;
+    uniform sampler2D uVelocity;
+    out vec4 fragColor;
+    void main(){
+      float L = texture(uVelocity, vL).x;
+      float R = texture(uVelocity, vR).x;
+      float T = texture(uVelocity, vT).y;
+      float B = texture(uVelocity, vB).y;
+      vec2 C = texture(uVelocity, vUv).xy;
+      if (vL.x < 0.0) L = -C.x;
+      if (vR.x > 1.0) R = -C.x;
+      if (vT.y > 1.0) T = -C.y;
+      if (vB.y < 0.0) B = -C.y;
+      float div = 0.5*(R-L+T-B);
+      fragColor = vec4(div,0.0,0.0,1.0);
+    }`;
+
+  const curlFS = `#version 300 es
+    precision highp float;
+    in vec2 vUv, vL, vR, vT, vB;
+    uniform sampler2D uVelocity;
+    out vec4 fragColor;
+    void main(){
+      float L = texture(uVelocity, vL).y;
+      float R = texture(uVelocity, vR).y;
+      float T = texture(uVelocity, vT).x;
+      float B = texture(uVelocity, vB).x;
+      float vort = 0.5*(R-L-T+B);
+      fragColor = vec4(vort,0.0,0.0,1.0);
+    }`;
+
+  const vorticityFS = `#version 300 es
+    precision highp float;
+    in vec2 vUv, vL, vR, vT, vB;
+    uniform sampler2D uVelocity;
+    uniform sampler2D uCurl;
+    uniform float curlStrength;
+    uniform float dt;
+    out vec4 fragColor;
+    void main(){
+      float L = texture(uCurl, vL).x;
+      float R = texture(uCurl, vR).x;
+      float T = texture(uCurl, vT).x;
+      float B = texture(uCurl, vB).x;
+      float C = texture(uCurl, vUv).x;
+      vec2 force = 0.5*vec2(abs(T)-abs(B), abs(R)-abs(L));
+      force /= length(force)+0.0001;
+      force *= curlStrength*C;
+      force.y *= -1.0;
+      vec2 vel = texture(uVelocity, vUv).xy;
+      vel += force*dt;
+      vel = clamp(vel, -1000.0, 1000.0);
+      fragColor = vec4(vel,0.0,1.0);
+    }`;
+
+  const pressureFS = `#version 300 es
+    precision highp float;
+    in vec2 vUv, vL, vR, vT, vB;
+    uniform sampler2D uPressure;
+    uniform sampler2D uDivergence;
+    out vec4 fragColor;
+    void main(){
+      float L = texture(uPressure, vL).x;
+      float R = texture(uPressure, vR).x;
+      float T = texture(uPressure, vT).x;
+      float B = texture(uPressure, vB).x;
+      float div = texture(uDivergence, vUv).x;
+      float p = (L+R+B+T-div)*0.25;
+      fragColor = vec4(p,0.0,0.0,1.0);
+    }`;
+
+  const gradientSubtractFS = `#version 300 es
+    precision highp float;
+    in vec2 vUv, vL, vR, vT, vB;
+    uniform sampler2D uPressure;
+    uniform sampler2D uVelocity;
+    out vec4 fragColor;
+    void main(){
+      float L = texture(uPressure, vL).x;
+      float R = texture(uPressure, vR).x;
+      float T = texture(uPressure, vT).x;
+      float B = texture(uPressure, vB).x;
+      vec2 vel = texture(uVelocity, vUv).xy;
+      vel -= vec2(R-L, T-B)*0.5;
+      fragColor = vec4(vel,0.0,1.0);
+    }`;
+
+  const displayFS = `#version 300 es
+    precision highp float;
+    in vec2 vUv, vL, vR, vT, vB;
+    uniform sampler2D uDye;
+    uniform vec3 bgColor;
+    uniform vec2 texelSize;
+    out vec4 fragColor;
+    void main(){
+      vec3 d = texture(uDye, vUv).rgb;
+      float coverage = clamp(max(d.r, max(d.g, d.b)), 0.0, 1.0);
+      vec3 col = mix(bgColor, d, coverage);
+
+      // fake-normal diffuse shading from the dye density gradient — gives
+      // paint a sculpted, glossy feel instead of reading as flat color fill
+      vec2 wide = texelSize * 8.0;
+      vec3 lc = texture(uDye, vUv-vec2(wide.x,0.0)).rgb, rc = texture(uDye, vUv+vec2(wide.x,0.0)).rgb;
+      vec3 tc = texture(uDye, vUv+vec2(0.0,wide.y)).rgb, bc = texture(uDye, vUv-vec2(0.0,wide.y)).rgb;
+      float dx = length(rc) - length(lc);
+      float dy = length(tc) - length(bc);
+      vec3 n = normalize(vec3(dx, dy, wide.x*3.0));
+      float diffuse = clamp(dot(n, vec3(0.0,0.0,1.0)) + 0.85, 0.85, 1.0);
+      col *= mix(1.0, diffuse, coverage);
+
+      float lum = dot(col, vec3(0.299,0.587,0.114));
+      col = mix(vec3(lum), col, 1.28);
+      fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+    }`;
+
+  const clearFS = `#version 300 es
+    precision highp float;
+    out vec4 fragColor;
+    void main(){ fragColor = vec4(0.0,0.0,0.0,1.0); }`;
+
+  const pressureDecayFS = `#version 300 es
+    precision highp float;
+    in vec2 vUv;
+    uniform sampler2D uTexture;
+    uniform float value;
+    out vec4 fragColor;
+    void main(){ fragColor = value * texture(uTexture, vUv); }`;
+
+  const P = {
+    splat: program(baseVS, splatFS),
+    dyeSplat: program(baseVS, dyeSplatFS),
+    advection: program(baseVS, advectionFS),
+    divergence: program(baseVS, divergenceFS),
+    curl: program(baseVS, curlFS),
+    vorticity: program(baseVS, vorticityFS),
+    pressure: program(baseVS, pressureFS),
+    gradientSubtract: program(baseVS, gradientSubtractFS),
+    display: program(baseVS, displayFS),
+    clear: program(baseVS, clearFS),
+    pressureDecay: program(baseVS, pressureDecayFS)
+  };
+
+  function useProgram(p){ gl.useProgram(p.program); bindQuad(p.program); return p; }
+  function setTexelSize(p, w, h){ gl.uniform2f(p.uniforms['texelSize'], 1.0/w, 1.0/h); }
+  function bindFBO(fbo, w, h){ gl.bindFramebuffer(gl.FRAMEBUFFER, fbo); gl.viewport(0,0,w,h); }
+  function bindTex(unit, tex){ gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D, tex); }
+
+  function clearFBO(target){
+    const p = useProgram(P.clear);
+    bindFBO(target.fbo, target.w, target.h);
+    drawQuad();
+  }
+
+  const DT = 1/60;
+  const PRESSURE_ITERS = 22;
+  const PRESSURE_DECAY = 0.8; // relax stale pressure each frame before warm-starting Jacobi, per reference
+  const VEL_DISSIPATION = 1.1;    // settle faster — a slow song shouldn't keep sloshing after each note
+  const DYE_DISSIPATION = 0.035;  // fade much more slowly — paint should linger into a piece, not flash and vanish
+  const CURL_STRENGTH = 22.0;     // higher resolution should resolve this as organic turbulence, not jumpiness
+
+  function simulate(){
+    let p;
+    // scaling dt scales advection speed, dye/density evolution, and pressure
+    // response all together and in proportion — the one coherent way to make
+    // the whole fluid feel faster or slower as a single "speed" control
+    const simDt = DT * settings.speed;
+
+    p = useProgram(P.curl);
+    setTexelSize(p, simW, simH);
+    bindTex(0, velocity.read.tex); gl.uniform1i(p.uniforms['uVelocity'], 0);
+    bindFBO(curlFBO.fbo, simW, simH);
+    drawQuad();
+
+    p = useProgram(P.vorticity);
+    setTexelSize(p, simW, simH);
+    bindTex(0, velocity.read.tex); gl.uniform1i(p.uniforms['uVelocity'], 0);
+    bindTex(1, curlFBO.tex); gl.uniform1i(p.uniforms['uCurl'], 1);
+    gl.uniform1f(p.uniforms['curlStrength'], CURL_STRENGTH);
+    gl.uniform1f(p.uniforms['dt'], simDt);
+    bindFBO(velocity.write.fbo, simW, simH);
+    drawQuad();
+    velocity.swap();
+
+    p = useProgram(P.divergence);
+    setTexelSize(p, simW, simH);
+    bindTex(0, velocity.read.tex); gl.uniform1i(p.uniforms['uVelocity'], 0);
+    bindFBO(divergenceFBO.fbo, simW, simH);
+    drawQuad();
+
+    p = useProgram(P.pressureDecay);
+    bindTex(0, pressure.read.tex); gl.uniform1i(p.uniforms['uTexture'], 0);
+    gl.uniform1f(p.uniforms['value'], PRESSURE_DECAY);
+    bindFBO(pressure.write.fbo, simW, simH);
+    drawQuad();
+    pressure.swap();
+
+    p = useProgram(P.pressure);
+    setTexelSize(p, simW, simH);
+    bindTex(1, divergenceFBO.tex); gl.uniform1i(p.uniforms['uDivergence'], 1);
+    for (let i=0;i<PRESSURE_ITERS;i++){
+      bindTex(0, pressure.read.tex); gl.uniform1i(p.uniforms['uPressure'], 0);
+      bindFBO(pressure.write.fbo, simW, simH);
+      drawQuad();
+      pressure.swap();
+    }
+
+    p = useProgram(P.gradientSubtract);
+    setTexelSize(p, simW, simH);
+    bindTex(0, pressure.read.tex); gl.uniform1i(p.uniforms['uPressure'], 0);
+    bindTex(1, velocity.read.tex); gl.uniform1i(p.uniforms['uVelocity'], 1);
+    bindFBO(velocity.write.fbo, simW, simH);
+    drawQuad();
+    velocity.swap();
+
+    p = useProgram(P.advection);
+    setTexelSize(p, simW, simH);
+    bindTex(0, velocity.read.tex); gl.uniform1i(p.uniforms['uVelocity'], 0);
+    bindTex(1, velocity.read.tex); gl.uniform1i(p.uniforms['uSource'], 1);
+    gl.uniform1f(p.uniforms['dt'], simDt);
+    gl.uniform1f(p.uniforms['dissipation'], VEL_DISSIPATION);
+    bindFBO(velocity.write.fbo, simW, simH);
+    drawQuad();
+    velocity.swap();
+
+    p = useProgram(P.advection);
+    bindTex(0, velocity.read.tex); gl.uniform1i(p.uniforms['uVelocity'], 0);
+    bindTex(1, dye.read.tex); gl.uniform1i(p.uniforms['uSource'], 1);
+    gl.uniform1f(p.uniforms['dt'], simDt);
+    gl.uniform1f(p.uniforms['dissipation'], DYE_DISSIPATION);
+    bindFBO(dye.write.fbo, dye.write.w, dye.write.h);
+    drawQuad();
+    dye.swap();
+  }
+
+  function splat(target, x, y, colorArr, radius){
+    const p = useProgram(P.splat);
+    bindTex(0, target.read.tex); gl.uniform1i(p.uniforms['uTarget'], 0);
+    gl.uniform1f(p.uniforms['aspectRatio'], ASPECT);
+    gl.uniform2f(p.uniforms['point'], x, y);
+    gl.uniform3f(p.uniforms['splatColor'], colorArr[0], colorArr[1], colorArr[2]);
+    gl.uniform1f(p.uniforms['radius'], radius);
+    bindFBO(target.write.fbo, target.write.w, target.write.h);
+    drawQuad();
+    target.swap();
+  }
+
+  // Dye-only: bounded blend so paint can never accumulate past white, no matter
+  // how long a note holds or how many times the same spot gets hit.
+  function splatDye(target, x, y, colorArr, strength, radius){
+    const p = useProgram(P.dyeSplat);
+    bindTex(0, target.read.tex); gl.uniform1i(p.uniforms['uTarget'], 0);
+    gl.uniform1f(p.uniforms['aspectRatio'], ASPECT);
+    gl.uniform2f(p.uniforms['point'], x, y);
+    gl.uniform3f(p.uniforms['splatColor'], colorArr[0], colorArr[1], colorArr[2]);
+    gl.uniform1f(p.uniforms['strength'], strength);
+    gl.uniform1f(p.uniforms['radius'], radius);
+    bindFBO(target.write.fbo, target.write.w, target.write.h);
+    drawQuad();
+    target.swap();
+  }
+
+  function render(){
+    const p = useProgram(P.display);
+    setTexelSize(p, dyeW, dyeH);
+    bindTex(0, dye.read.tex); gl.uniform1i(p.uniforms['uDye'], 0);
+    const rgb = hexToRgb01(settings.bgColor);
+    gl.uniform3f(p.uniforms['bgColor'], rgb[0], rgb[1], rgb[2]);
+    bindFBO(null, canvas.width, canvas.height);
+    drawQuad();
+  }
+
+  document.getElementById('eraseBtn').addEventListener('click', ()=>{
+    clearFBO(dye.read); clearFBO(dye.write);
+    clearFBO(velocity.read); clearFBO(velocity.write);
+    clearFBO(pressure.read); clearFBO(pressure.write);
+  });
+
+  // ---------- color theory ----------
+  const organicPalette = [16, 28, 350, 205, 150, 42, 265, 5, 95, 320, 235, 60, 300, 170];
+  function baseHue(pc){ return ((pc*7)%12/12)*360; }
+  function colorForNote(pc, rms){
+    let h,s,l;
+    const mathHue = baseHue(pc);
+    if (settings.colorMode==='mathematical'){ h=mathHue; s=72+Math.random()*18; l=50+Math.random()*12; }
+    else if (settings.colorMode==='organic'){
+      const base = organicPalette[Math.floor(Math.random()*organicPalette.length)];
+      h = base+(Math.random()-0.5)*26; s=65+Math.random()*24; l=48+Math.random()*14;
+    } else { h=mathHue+(Math.random()-0.5)*45; s=68+Math.random()*24; l=48+Math.random()*14; }
+    s = Math.min(96, s+rms*30); h=((h%360)+360)%360;
+    return hsl2rgb(h/360, s/100, l/100);
+  }
+  function hsl2rgb(h,s,l){
+    if (s===0) return [l,l,l];
+    const q = l<0.5 ? l*(1+s) : l+s-l*s;
+    const p = 2*l-q;
+    function hue2rgb(t){
+      if (t<0) t+=1; if (t>1) t-=1;
+      if (t<1/6) return p+(q-p)*6*t;
+      if (t<1/2) return q;
+      if (t<2/3) return p+(q-p)*(2/3-t)*6;
+      return p;
+    }
+    return [hue2rgb(h+1/3), hue2rgb(h), hue2rgb(h-1/3)];
+  }
+
+  // ---------- pitch + chord detection ----------
+  function autoCorrelate(buffer, sampleRate){
+    let n=buffer.length, rms=0;
+    for (let i=0;i<n;i++) rms += buffer[i]*buffer[i];
+    rms = Math.sqrt(rms/n);
+    if (rms < 0.004) return { frequency:-1, rms };
+    let r1=0, r2=n-1, thresh=0.2;
+    for (let i=0;i<n/2;i++){ if (Math.abs(buffer[i])<thresh){ r1=i; break; } }
+    for (let i=1;i<n/2;i++){ if (Math.abs(buffer[n-i])<thresh){ r2=n-i; break; } }
+    const trimmed = buffer.slice(r1,r2);
+    const m = trimmed.length;
+    if (m<8) return { frequency:-1, rms };
+    const c = new Array(m).fill(0);
+    for (let lag=0; lag<m; lag++){ let sum=0; for (let j=0;j<m-lag;j++) sum+=trimmed[j]*trimmed[j+lag]; c[lag]=sum; }
+    let d=0; while (d<m-1 && c[d]>c[d+1]) d++;
+    let maxVal=-1, maxPos=-1;
+    for (let i=d;i<m;i++){ if (c[i]>maxVal){ maxVal=c[i]; maxPos=i; } }
+    if (maxPos<=0 || maxPos>=m-1) return { frequency:-1, rms };
+    const x1=c[maxPos-1],x2=c[maxPos],x3=c[maxPos+1];
+    const a=(x1+x3-2*x2)/2, b=(x3-x1)/2;
+    let T0 = maxPos; if (a!==0) T0 = maxPos - b/(2*a);
+    const freq = sampleRate/T0;
+    if (freq<60 || freq>1400) return { frequency:-1, rms };
+    return { frequency:freq, rms };
+  }
+  function freqToPitchClass(freq){
+    const semis = 12*Math.log2(freq/440);
+    const midi = Math.round(69+semis);
+    return { pc: ((midi%12)+12)%12, midi };
+  }
+  function detectChord(freqData, rms){
+    if (!freqData || rms < 0.008) return [];
+    const thresh = Math.max(60, -100+rms*800);
+    const peaks = [];
+    for (let i=1;i<freqData.length-1;i++){
+      if (freqData[i]>thresh && freqData[i]>freqData[i-1] && freqData[i]>freqData[i+1]){
+        const bf = (i*audioCtx.sampleRate)/(freqData.length*2);
+        if (bf>60 && bf<1400) peaks.push({freq:bf, mag:freqData[i]});
+      }
+    }
+    peaks.sort((a,b)=>b.mag-a.mag);
+    return peaks.slice(0,3).map(p=>freqToPitchClass(p.freq).pc);
+  }
+
+  // ---------- brush head: momentum-driven position ----------
+  let head = { x:0.5, y:0.5, heading: Math.random()*Math.PI*2, headingTarget: Math.random()*Math.PI*2 };
+  let currentColor = [1,1,1];
+  let lastActiveTime = 0, lastFreq = 0;
+  const HANG_MS = 800, RETRIGGER_HZ = 38;
+
+  function newHeadPosition(){
+    head.x = 0.14 + Math.random()*0.72;
+    head.y = 0.14 + Math.random()*0.72;
+    head.heading = Math.random()*Math.PI*2;
+    head.headingTarget = head.heading;
+  }
+
+  function flowParams(){
+    let style = settings.flowStyle;
+    if (style==='mixed') style = Math.random()<0.5 ? 'ink' : 'watercolor';
+    if (style==='ink') return { radius:0.007, forceMul:1.2 };
+    return { radius:0.016, forceMul:0.8 };
+  }
+  let currentFlow = flowParams();
+
+  let noteStartTime = 0;
+  function onNoteStart(freq, rms){
+    const { pc } = freqToPitchClass(freq);
+    newHeadPosition();
+    currentColor = colorForNote(pc, rms);
+    currentFlow = flowParams();
+    noteStartTime = performance.now();
+  }
+
+  function onNoteTick(freq, rms, dt, chordPcs){
+    const { pc, midi } = freqToPitchClass(freq);
+    const midiNorm = Math.max(0, Math.min(1, (midi-40)/48));
+    // target drifts slowly and randomly; actual heading eases toward it —
+    // this is what stops the push direction flickering (and vorticity
+    // confinement amplifying that flicker into a visible wobble)
+    head.headingTarget += (0.5-midiNorm)*0.02 + (Math.random()-0.5)*0.18;
+    head.heading += (head.headingTarget - head.heading) * Math.min(1, dt*4);
+
+    // a long held note tapers off instead of pushing at full strength the
+    // whole time — otherwise sustained motion builds enough velocity to
+    // sweep that one color across the entire canvas, overtaking earlier work
+    const sustainFatigue = 1 / (1 + Math.max(0, performance.now()-noteStartTime)/1400);
+
+    const speed = (0.05 + rms*0.18) * settings.intensity * currentFlow.forceMul * sustainFatigue;
+    const prevX = head.x, prevY = head.y;
+    head.x = Math.max(0.03, Math.min(0.97, head.x + Math.cos(head.heading)*speed*dt));
+    head.y = Math.max(0.03, Math.min(0.97, head.y + Math.sin(head.heading)*speed*dt));
+    const moved = Math.hypot(head.x-prevX, head.y-prevY);
+    // paint deposit scales with real movement, so a held/static note sprays
+    // scattered shots instead of pooling into one soft blob
+    const depositScale = 0.3 + Math.min(1, moved/(currentFlow.radius*0.7))*0.7;
+
+    const force = (0.07 + rms*0.22) * settings.intensity * currentFlow.forceMul * sustainFatigue;
+    splat(velocity, head.x, head.y, [Math.cos(head.heading)*force, Math.sin(head.heading)*force, 0], currentFlow.radius*2.4);
+    splatDye(dye, head.x, head.y, currentColor, (0.6+rms*0.9)*depositScale, currentFlow.radius);
+    for (let i=0;i<2;i++){
+      const jr = currentFlow.radius*(0.5+Math.random()*0.6);
+      splatDye(dye, head.x+(Math.random()-0.5)*jr*1.6, head.y+(Math.random()-0.5)*jr*1.6,
+        currentColor, (0.3+rms*0.5)*depositScale, currentFlow.radius*(0.3+Math.random()*0.2));
+    }
+    // chord richness: other simultaneous pitches get their own small splats nearby
+    if (chordPcs && chordPcs.length>1){
+      for (let i=1;i<chordPcs.length;i++){
+        const cc = colorForNote(chordPcs[i], rms);
+        splatDye(dye, head.x+(Math.random()-0.5)*0.1, head.y+(Math.random()-0.5)*0.1,
+          cc, (0.4+rms*0.4)*depositScale, currentFlow.radius*0.6);
+      }
+    }
+  }
+
+  // ---------- audio ----------
+  let audioCtx, analyser, timeBuf, freqData;
+  let noteActive = false;
+  let lastFrameTime = performance.now();
+  const levelMeterBar = document.getElementById('levelMeterBar');
+  const levelMeterWrap = document.getElementById('levelMeterWrap');
+
+  function audioLoop(){
+    const now = performance.now();
+    const dt = Math.min(0.05, (now-lastFrameTime)/1000);
+    lastFrameTime = now;
+
+    analyser.getFloatTimeDomainData(timeBuf);
+    const { frequency, rms } = autoCorrelate(timeBuf, audioCtx.sampleRate);
+    const active = frequency !== -1 && rms > 0.006;
+
+    const meterPct = Math.min(100, rms * 900);
+    levelMeterBar.style.width = meterPct + '%';
+    levelMeterBar.style.background = active ? '#7a9a6a' : '#c98a52';
+
+    if (active){
+      analyser.getByteFrequencyData(freqData);
+      const chordPcs = detectChord(freqData, rms);
+      if (!noteActive){
+        noteActive = true; onNoteStart(frequency, rms); lastFreq = frequency;
+      } else if (Math.abs(frequency-lastFreq) > RETRIGGER_HZ){
+        onNoteStart(frequency, rms); lastFreq = frequency;
+      }
+      onNoteTick(frequency, rms, dt, chordPcs);
+      lastActiveTime = now;
+    } else if (noteActive && now-lastActiveTime > HANG_MS){
+      noteActive = false;
+    }
+
+    simulate();
+    render();
+    requestAnimationFrame(audioLoop);
+  }
+
+  async function startListening(){
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      document.getElementById('startBtn').textContent = 'mic needs https or localhost — see chat for a local server command';
+      return;
+    }
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:{
+        echoCancellation:false, noiseSuppression:true, autoGainControl:false
+      }});
+      audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
+      const source = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0;
+      timeBuf = new Float32Array(analyser.fftSize);
+      freqData = new Uint8Array(analyser.frequencyBinCount);
+      source.connect(analyser);
+      document.getElementById('startOverlay').classList.add('hidden');
+      document.getElementById('listeningDot').style.display = 'block';
+      levelMeterWrap.style.display = 'block';
+      lastFrameTime = performance.now();
+      requestAnimationFrame(audioLoop);
+    }catch(err){
+      document.getElementById('startBtn').textContent = 'mic error: ' + (err.name||'unknown') + ' — ' + (err.message||'check permissions');
+    }
+  }
+  document.getElementById('startBtn').addEventListener('click', startListening);
+
+})();
+</script>
+</body>
+</html>
